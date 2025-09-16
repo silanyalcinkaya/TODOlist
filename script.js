@@ -219,27 +219,77 @@ const observer = new IntersectionObserver((entries) => {
 // Observe login section
 observer.observe(loginSection);
 
+// Static credentials
+const STATIC_USERNAME = 'admin';
+const STATIC_PASSWORD = '123456';
+
 // Login form submission
 const loginForm = document.querySelector('#login-section form');
 loginForm.addEventListener('submit', (e) => {
     e.preventDefault();
     
-    // Add fade-out animation to login section
-    loginSection.classList.add('fade-out');
+    // Get form inputs
+    const usernameInput = loginForm.querySelector('input[type="text"]');
+    const passwordInput = loginForm.querySelector('input[type="password"]');
+    const username = usernameInput.value.trim();
+    const password = passwordInput.value.trim();
     
-    // Listen for animation end
-    loginSection.addEventListener('animationend', () => {
-        // Hide login section
-        loginSection.classList.add('hidden');
+    // Check credentials
+    if (username === STATIC_USERNAME && password === STATIC_PASSWORD) {
+        // Clear any existing error messages
+        clearErrorMessage();
         
-        // Show main app
-        mainApp.classList.remove('hidden');
-        mainApp.classList.add('flex');
+        // Add fade-out animation to login section
+        loginSection.classList.add('fade-out');
         
-        // Initialize main app
-        initMainApp();
-    });
+        // Listen for animation end
+        loginSection.addEventListener('animationend', () => {
+            // Hide login section
+            loginSection.classList.add('hidden');
+            
+            // Show main app
+            mainApp.classList.remove('hidden');
+            mainApp.classList.add('flex');
+            
+            // Initialize main app
+            initMainApp();
+        });
+    } else {
+        // Show error message
+        showErrorMessage('Kullanıcı adı veya şifre hatalı!');
+    }
 });
+
+// Function to show error message
+function showErrorMessage(message) {
+    // Remove existing error message if any
+    clearErrorMessage();
+    
+    // Create error message element
+    const errorDiv = document.createElement('div');
+    errorDiv.className = 'error-message mt-4 p-3 bg-red-900/50 border border-red-500 text-red-300 text-sm text-center';
+    errorDiv.textContent = message;
+    
+    // Add to form
+    loginForm.appendChild(errorDiv);
+    
+    // Add shake animation to form
+    const formContainer = loginForm.closest('div');
+    formContainer.classList.add('animate-shake');
+    
+    // Remove shake animation after it completes
+    setTimeout(() => {
+        formContainer.classList.remove('animate-shake');
+    }, 500);
+}
+
+// Function to clear error message
+function clearErrorMessage() {
+    const existingError = loginForm.querySelector('.error-message');
+    if (existingError) {
+        existingError.remove();
+    }
+}
 
 // ==================== TODO APP FUNCTIONALITY ====================
 
@@ -250,6 +300,7 @@ let currentFilter = 'all'; // 'all', 'active', 'completed'
 // DOM elements for main app
 let taskInput, addTaskBtn, taskList, emptyState, taskStats;
 let showAllBtn, showActiveBtn, showCompletedBtn, clearCompletedBtn;
+let dueDatetimeInput, duePickerBtn;
 
 // Initialize main app
 function initMainApp() {
@@ -263,6 +314,8 @@ function initMainApp() {
     showActiveBtn = document.getElementById('show-active');
     showCompletedBtn = document.getElementById('show-completed');
     clearCompletedBtn = document.getElementById('clear-completed');
+    dueDatetimeInput = document.getElementById('due-datetime');
+    duePickerBtn = document.getElementById('due-picker-btn');
     
     // Load tasks from localStorage
     loadTasks();
@@ -274,6 +327,48 @@ function initMainApp() {
             addTask();
         }
     });
+
+    // Initialize and enforce min for datetime input
+    if (dueDatetimeInput) {
+        const updateMin = () => {
+            const now = new Date();
+            const pad = (n) => String(n).padStart(2, '0');
+            const localISO = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+            dueDatetimeInput.min = localISO;
+            // If current value is before min, clear it
+            if (dueDatetimeInput.value && dueDatetimeInput.value < localISO) {
+                dueDatetimeInput.value = localISO;
+            }
+        };
+        updateMin();
+        // Refresh min every minute to keep up with time
+        setInterval(updateMin, 60000);
+
+        // Prevent manual selection of the past
+        dueDatetimeInput.addEventListener('change', () => {
+            if (!dueDatetimeInput.value) return;
+            const minVal = dueDatetimeInput.min;
+            if (dueDatetimeInput.value < minVal) {
+                dueDatetimeInput.value = minVal;
+            }
+        });
+    }
+
+    // Visible button to open native picker where supported
+    if (duePickerBtn && dueDatetimeInput) {
+        const openPicker = () => {
+            try {
+                if (typeof dueDatetimeInput.showPicker === 'function') {
+                    dueDatetimeInput.showPicker();
+                    return;
+                }
+            } catch (_) {}
+            // Fallback: focus to trigger built-in UI
+            dueDatetimeInput.focus();
+            dueDatetimeInput.click();
+        };
+        duePickerBtn.addEventListener('click', openPicker);
+    }
     
     // Filter buttons
     showAllBtn.addEventListener('click', () => setFilter('all'));
@@ -299,11 +394,15 @@ function addTask() {
         id: Date.now(),
         text: text,
         completed: false,
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        dueAt: dueDatetimeInput && dueDatetimeInput.value ? new Date(dueDatetimeInput.value).toISOString() : null
     };
     
     tasks.push(task);
     taskInput.value = '';
+    if (dueDatetimeInput) {
+        dueDatetimeInput.value = '';
+    }
     saveTasks();
     renderTasks();
 }
@@ -401,9 +500,12 @@ function createTaskElement(task) {
             class="w-5 h-5 text-white bg-transparent border border-gray-500 focus:ring-0 focus:ring-offset-0"
             ${task.completed ? 'checked' : ''}
         >
-        <span class="flex-1 text-white font-light transition-all duration-300 ${task.completed ? 'line-through text-gray-500' : ''}" style="font-family: 'Inter', 'Helvetica Neue', sans-serif;">
-            ${escapeHtml(task.text)}
-        </span>
+        <div class="flex-1 flex flex-col">
+            <span class="text-white font-light transition-all duration-300 ${task.completed ? 'line-through text-gray-500' : ''}" style="font-family: 'Inter', 'Helvetica Neue', sans-serif;">
+                ${escapeHtml(task.text)}
+            </span>
+            ${task.dueAt ? `<span class="text-xs text-gray-400 mt-1">${formatLocalDateTime(task.dueAt)}</span>` : ''}
+        </div>
         <button class="opacity-0 group-hover:opacity-100 transition-opacity duration-300 text-red-400 hover:text-red-300 p-2" title="Sil">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
@@ -444,6 +546,17 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// Format ISO datetime to local readable string
+function formatLocalDateTime(isoString) {
+    try {
+        const d = new Date(isoString);
+        if (Number.isNaN(d.getTime())) return '';
+        return d.toLocaleString([], { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+    } catch (_) {
+        return '';
+    }
 }
 
 // LocalStorage functions
