@@ -101,15 +101,13 @@
                         </button>
                     </div>
                 </div>
-                <div class="mb-6">
+                <div class="mb-4">
                     <label class="block text-sm text-gray-300 mb-2">Silinen Klasörler</label>
-                    <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                        <select id="deleted-folder-select" class="flex-1 bg-black/50 border border-gray-600 px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-white">
-                        </select>
-                        <div class="flex gap-2">
-                            <button id="restore-folder-btn" class="flex-1 sm:flex-none px-2 py-2 text-xs sm:text-sm border border-green-500 text-green-400 hover:text-green-300 hover:border-green-400 transition-all duration-300 whitespace-nowrap">Kurtar</button>
-                            <button id="purge-folder-btn" class="flex-1 sm:flex-none px-2 py-2 text-xs sm:text-sm border border-red-500 text-red-400 hover:text-red-300 hover:border-red-400 transition-all duration-300 whitespace-nowrap">Kalıcı Sil</button>
-                        </div>
+                    <select id="deleted-folder-select" class="w-full bg-black/50 border border-gray-600 px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-white mb-2">
+                    </select>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button id="restore-folder-btn" class="px-2 py-1.5 text-xs border border-green-500 text-green-400 hover:text-green-300 hover:border-green-400 transition-all duration-300">Kurtar</button>
+                        <button id="purge-folder-btn" class="px-2 py-1.5 text-xs border border-red-500 text-red-400 hover:text-red-300 hover:border-red-400 transition-all duration-300">Kalıcı Sil</button>
                     </div>
                 </div>
 

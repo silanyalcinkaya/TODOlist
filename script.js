@@ -628,17 +628,26 @@ function getFilteredTasks() {
         // Apply calendar day filter if any
         let inDate = deletedFolderTasks;
         if (selectedCalendarDate) {
-            const targetDate = selectedCalendarDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+            // Use local date format to avoid timezone issues
+            const targetYear = selectedCalendarDate.getFullYear();
+            const targetMonth = selectedCalendarDate.getMonth();
+            const targetDay = selectedCalendarDate.getDate();
+            
             inDate = deletedFolderTasks.filter(t => {
                 if (!t.dueAt) return false;
                 // Eğer ISO datetime ise
                 if (t.dueAt.includes('T')) {
-                    const taskDate = new Date(t.dueAt).toISOString().split('T')[0];
-                    return taskDate === targetDate;
+                    const taskDate = new Date(t.dueAt);
+                    return taskDate.getFullYear() === targetYear && 
+                           taskDate.getMonth() === targetMonth && 
+                           taskDate.getDate() === targetDay;
                 }
                 // Eğer sadece tarih string ise
                 else if (t.dueAt.match(/^\d{4}-\d{2}-\d{2}$/)) {
-                    return t.dueAt === targetDate;
+                    const taskDate = new Date(t.dueAt);
+                    return taskDate.getFullYear() === targetYear && 
+                           taskDate.getMonth() === targetMonth && 
+                           taskDate.getDate() === targetDay;
                 }
                 // Eğer sadece saat string ise, takvimde gösterme
                 return false;
@@ -659,17 +668,26 @@ function getFilteredTasks() {
     // Apply calendar day filter if any
     let inDate = inFolder;
     if (selectedCalendarDate) {
-        const targetDate = selectedCalendarDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+        // Use local date format to avoid timezone issues
+        const targetYear = selectedCalendarDate.getFullYear();
+        const targetMonth = selectedCalendarDate.getMonth();
+        const targetDay = selectedCalendarDate.getDate();
+        
         inDate = inFolder.filter(t => {
             if (!t.dueAt) return false;
             // Eğer ISO datetime ise
             if (t.dueAt.includes('T')) {
-                const taskDate = new Date(t.dueAt).toISOString().split('T')[0];
-                return taskDate === targetDate;
+                const taskDate = new Date(t.dueAt);
+                return taskDate.getFullYear() === targetYear && 
+                       taskDate.getMonth() === targetMonth && 
+                       taskDate.getDate() === targetDay;
             }
             // Eğer sadece tarih string ise
             else if (t.dueAt.match(/^\d{4}-\d{2}-\d{2}$/)) {
-                return t.dueAt === targetDate;
+                const taskDate = new Date(t.dueAt);
+                return taskDate.getFullYear() === targetYear && 
+                       taskDate.getMonth() === targetMonth && 
+                       taskDate.getDate() === targetDay;
             }
             // Eğer sadece saat string ise, takvimde gösterme
             return false;
@@ -1135,13 +1153,22 @@ function renderCalendar() {
 function onCalendarDayClick(dateObj) {
     // Set filter to show all, but constrain via date when rendering
     setFilter('all');
-    // Store selected date for render filter
+    // Store selected date for render filter - use local date to avoid timezone issues
     selectedCalendarDate = new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate());
     renderTasks();
     // Visual feedback: bold header for selected day in month label
     if (calendarHeaderEl) {
         const fmt = new Intl.DateTimeFormat('tr-TR', { day: '2-digit', month: 'long', year: 'numeric' });
-        calendarHeaderEl.textContent = `${new Intl.DateTimeFormat('tr-TR', { month: 'long', year: 'numeric' }).format(calendarViewDate)} • ${fmt.format(selectedCalendarDate)}`;
+        calendarHeaderEl.innerHTML = `${new Intl.DateTimeFormat('tr-TR', { month: 'long', year: 'numeric' }).format(calendarViewDate)} • ${fmt.format(selectedCalendarDate)} <button onclick="clearCalendarFilter()" class="ml-2 text-xs text-gray-400 hover:text-white">×</button>`;
+    }
+}
+
+function clearCalendarFilter() {
+    selectedCalendarDate = null;
+    renderTasks();
+    if (calendarHeaderEl) {
+        const monthFormatter = new Intl.DateTimeFormat('tr-TR', { month: 'long', year: 'numeric' });
+        calendarHeaderEl.textContent = monthFormatter.format(calendarViewDate);
     }
 }
 
