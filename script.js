@@ -76,6 +76,20 @@ function onWindowResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    
+    // Also resize login renderer if it exists
+    if (loginRenderer) {
+        loginCamera.aspect = window.innerWidth / window.innerHeight;
+        loginCamera.updateProjectionMatrix();
+        loginRenderer.setSize(window.innerWidth, window.innerHeight);
+    }
+    
+    // Also resize main app renderer if it exists
+    if (mainRenderer) {
+        mainCamera.aspect = window.innerWidth / window.innerHeight;
+        mainCamera.updateProjectionMatrix();
+        mainRenderer.setSize(window.innerWidth, window.innerHeight);
+    }
 }
 
 function animate() {
@@ -293,14 +307,23 @@ function clearErrorMessage() {
 
 // ==================== TODO APP FUNCTIONALITY ====================
 
-// Task data structure
+// Task & Folder data structures
 let tasks = [];
+let folders = [];
+let selectedFolderId = null;
+let selectedDeletedFolderId = null; // For viewing deleted folder tasks
 let currentFilter = 'all'; // 'all', 'active', 'completed'
+let deletedCompletedTasks = []; // Backup for undo functionality
+let undoTimeout = null; // Timer for undo functionality
 
 // DOM elements for main app
 let taskInput, addTaskBtn, taskList, emptyState, taskStats;
 let showAllBtn, showActiveBtn, showCompletedBtn, clearCompletedBtn;
 let dueDatetimeInput, duePickerBtn;
+let folderListEl, addFolderBtn, currentFolderLabel, folderSelectEl, deleteFolderBtn;
+let deletedFolderSelectEl, purgeFolderBtn, restoreFolderBtn;
+let calendarGridEl, calendarHeaderEl, calPrevBtn, calNextBtn;
+let calendarViewDate = new Date();
 
 // Initialize main app
 function initMainApp() {
@@ -316,17 +339,40 @@ function initMainApp() {
     clearCompletedBtn = document.getElementById('clear-completed');
     dueDatetimeInput = document.getElementById('due-datetime');
     duePickerBtn = document.getElementById('due-picker-btn');
+    folderListEl = document.getElementById('folder-list');
+    folderSelectEl = document.getElementById('folder-select');
+    addFolderBtn = document.getElementById('add-folder-btn');
+    currentFolderLabel = document.getElementById('current-folder-label');
+    calendarGridEl = document.getElementById('calendar-grid');
+    calendarHeaderEl = document.getElementById('calendar-header');
+    calPrevBtn = document.getElementById('cal-prev');
+    calNextBtn = document.getElementById('cal-next');
+    deleteFolderBtn = document.getElementById('delete-folder-btn');
+    deletedFolderSelectEl = document.getElementById('deleted-folder-select');
+    purgeFolderBtn = document.getElementById('purge-folder-btn');
+    restoreFolderBtn = document.getElementById('restore-folder-btn');
     
-    // Load tasks from localStorage
-    loadTasks();
+    // Load tasks & folders from localStorage
+    loadState();
+    ensureDefaultFolder();
     
     // Add event listeners
     addTaskBtn.addEventListener('click', addTask);
-    taskInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
+      taskInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
             addTask();
         }
     });
+
+    // Folder events
+    if (addFolderBtn) addFolderBtn.addEventListener('click', onAddFolder);
+    if (folderSelectEl) folderSelectEl.addEventListener('change', onFolderSelectChange);
+    if (deleteFolderBtn) deleteFolderBtn.addEventListener('click', onDeleteFolder);
+    if (purgeFolderBtn) purgeFolderBtn.addEventListener('click', onPurgeFolder);
+    if (restoreFolderBtn) restoreFolderBtn.addEventListener('click', onRestoreFolder);
+    if (deletedFolderSelectEl) deletedFolderSelectEl.addEventListener('change', onDeletedFolderSelectChange);
+    if (calPrevBtn) calPrevBtn.addEventListener('click', () => changeMonth(-1));
+    if (calNextBtn) calNextBtn.addEventListener('click', () => changeMonth(1));
 
     // Initialize and enforce min for datetime input
     if (dueDatetimeInput) {
@@ -381,21 +427,42 @@ function initMainApp() {
     // Initialize main app Three.js background
     initMainAppThreeJS();
     
-    // Render initial tasks
+    // Render initial UI
+    renderFolders();
+    renderDeletedFolders();
     renderTasks();
+    renderCalendar();
+    updateDeleteFolderButton();
+}
+
+// Filter selection
+function setFilter(filterKey) {
+    if (!['all', 'active', 'completed'].includes(filterKey)) return;
+    currentFilter = filterKey;
+    // Update active button UI
+    const allFilterButtons = document.querySelectorAll('.filter-btn');
+    allFilterButtons.forEach(btn => btn.classList.remove('active'));
+    if (filterKey === 'all' && showAllBtn) showAllBtn.classList.add('active');
+    if (filterKey === 'active' && showActiveBtn) showActiveBtn.classList.add('active');
+    if (filterKey === 'completed' && showCompletedBtn) showCompletedBtn.classList.add('active');
+    renderTasks();
+    renderCalendar();
+    updateDeleteFolderButton();
 }
 
 // Task management functions
-function addTask() {
+function addTask() {      
     const text = taskInput.value.trim();
     if (text === '') return;
+    if (!selectedFolderId) ensureDefaultFolder();
     
     const task = {
         id: Date.now(),
         text: text,
         completed: false,
         createdAt: new Date().toISOString(),
-        dueAt: dueDatetimeInput && dueDatetimeInput.value ? new Date(dueDatetimeInput.value).toISOString() : null
+        dueAt: dueDatetimeInput && dueDatetimeInput.value ? new Date(dueDatetimeInput.value).toISOString() : null,
+        folderId: selectedFolderId
     };
     
     tasks.push(task);
@@ -403,57 +470,160 @@ function addTask() {
     if (dueDatetimeInput) {
         dueDatetimeInput.value = '';
     }
-    saveTasks();
+    saveState();
     renderTasks();
+    renderCalendar();
+    updateDeleteFolderButton();
 }
 
 function toggleTask(id) {
     const task = tasks.find(t => t.id === id);
     if (task) {
         task.completed = !task.completed;
-        saveTasks();
+        saveState();
         renderTasks();
     }
 }
 
 function deleteTask(id) {
     tasks = tasks.filter(t => t.id !== id);
-    saveTasks();
+    saveState();
     renderTasks();
+    renderCalendar();
 }
 
 function clearCompleted() {
-    tasks = tasks.filter(t => !t.completed);
-    saveTasks();
+    // Store deleted tasks for undo functionality
+    deletedCompletedTasks = tasks.filter(t => t.completed && (!selectedFolderId || t.folderId === selectedFolderId));
+    
+    // Remove completed tasks
+    tasks = tasks.filter(t => !t.completed || t.folderId !== selectedFolderId);
+    saveState();
     renderTasks();
+    
+    // Show undo button
+    showUndoButton();
 }
 
-// Filter functions
-function setFilter(filter) {
-    currentFilter = filter;
+function showUndoButton() {
+    // Clear any existing timeout
+    if (undoTimeout) {
+        clearTimeout(undoTimeout);
+    }
     
-    // Update button states
-    [showAllBtn, showActiveBtn, showCompletedBtn].forEach(btn => {
-        btn.classList.remove('active', 'border-white', 'text-white');
-        btn.classList.add('border-gray-500', 'text-gray-400');
-    });
+    // Create or show undo button
+    let undoBtn = document.getElementById('undo-clear-btn');
+    if (!undoBtn) {
+        undoBtn = document.createElement('button');
+        undoBtn.id = 'undo-clear-btn';
+        undoBtn.className = 'px-6 py-3 border border-yellow-500 text-yellow-400 hover:border-yellow-400 hover:text-yellow-300 transition-all duration-300';
+        undoBtn.style.fontFamily = "'Inter', 'Helvetica Neue', sans-serif";
+        undoBtn.style.letterSpacing = '0.1em';
+        undoBtn.textContent = 'DEĞİŞİKLİĞİ GERİ AL';
+        undoBtn.addEventListener('click', undoClearCompleted);
+        
+        // Insert before clear completed button
+        const clearBtn = document.getElementById('clear-completed');
+        clearBtn.parentNode.insertBefore(undoBtn, clearBtn);
+    }
     
-    const activeBtn = filter === 'all' ? showAllBtn : 
-                     filter === 'active' ? showActiveBtn : showCompletedBtn;
-    activeBtn.classList.add('active', 'border-white', 'text-white');
-    activeBtn.classList.remove('border-gray-500', 'text-gray-400');
+    undoBtn.classList.remove('hidden');
     
-    renderTasks();
+    // Auto-hide after 5 seconds
+    undoTimeout = setTimeout(() => {
+        hideUndoButton();
+        deletedCompletedTasks = []; // Clear backup
+    }, 5000);
 }
+
+function hideUndoButton() {
+    const undoBtn = document.getElementById('undo-clear-btn');
+    if (undoBtn) {
+        undoBtn.classList.add('hidden');
+    }
+}
+
+function undoClearCompleted() {
+    // Clear timeout
+    if (undoTimeout) {
+        clearTimeout(undoTimeout);
+        undoTimeout = null;
+    }
+    
+    // Restore deleted tasks
+    tasks = [...tasks, ...deletedCompletedTasks];
+    deletedCompletedTasks = [];
+    
+    saveState();
+    renderTasks();
+    hideUndoButton();
+}
+
+function onClearFolderCompleted() {
+    // Don't allow clearing completed tasks in deleted folders
+    if (selectedDeletedFolderId) {
+        return;
+    }
+    
+    if (!selectedFolderId) {
+        return;
+    }
+    
+    // Store deleted tasks for undo functionality
+    deletedCompletedTasks = tasks.filter(t => t.completed && t.folderId === selectedFolderId);
+    
+    // Remove completed tasks from current folder
+    tasks = tasks.filter(t => !t.completed || t.folderId !== selectedFolderId);
+    saveState();
+    renderTasks();
+    renderCalendar();
+    
+    // Show undo button
+    showUndoButton();
+}
+
 
 function getFilteredTasks() {
+    // If viewing deleted folder tasks, show those instead
+    if (selectedDeletedFolderId) {
+        const deletedFolderTasks = tasks.filter(t => t.folderId === selectedDeletedFolderId);
+        // Apply calendar day filter if any
+        let inDate = deletedFolderTasks;
+        if (selectedCalendarDate) {
+            const start = new Date(selectedCalendarDate);
+            start.setHours(0,0,0,0);
+            const end = new Date(selectedCalendarDate);
+            end.setHours(23,59,59,999);
+            inDate = deletedFolderTasks.filter(t => t.dueAt && (new Date(t.dueAt)).getTime() >= start.getTime() && (new Date(t.dueAt)).getTime() <= end.getTime());
+        }
+        switch (currentFilter) {
+            case 'active':
+                return inDate.filter(t => !t.completed);
+            case 'completed':
+                return inDate.filter(t => t.completed);
+            default:
+                return inDate;
+        }
+    }
+    
+    // Normal folder filtering
+    const inFolder = tasks.filter(t => !selectedFolderId || t.folderId === selectedFolderId);
+    // Apply calendar day filter if any
+    let inDate = inFolder;
+    if (selectedCalendarDate) {
+        const start = new Date(selectedCalendarDate);
+        start.setHours(0,0,0,0);
+        const end = new Date(selectedCalendarDate);
+        end.setHours(23,59,59,999);
+        inDate = inFolder.filter(t => t.dueAt && (new Date(t.dueAt)).getTime() >= start.getTime() && (new Date(t.dueAt)).getTime() <= end.getTime());
+    }
     switch (currentFilter) {
         case 'active':
-            return tasks.filter(t => !t.completed);
+            return inDate.filter(t => !t.completed);
         case 'completed':
-            return tasks.filter(t => t.completed);
+            return inDate.filter(t => t.completed);
         default:
-            return tasks;
+            return inDate;
     }
 }
 
@@ -477,48 +647,68 @@ function renderTasks() {
         taskList.appendChild(taskElement);
     });
     
-    // Update stats
+    // Update stats & folder label
     updateStats();
+    updateCurrentFolderLabel();
+    // Refresh folder counts
+    renderFolders();
+    // Refresh calendar badges
+    renderCalendar();
     
-    // Show/hide clear completed button
-    const completedCount = tasks.filter(t => t.completed).length;
-    if (completedCount > 0) {
-        clearCompletedBtn.classList.remove('hidden');
-    } else {
+    // Show/hide clear completed button (but not when viewing deleted folders)
+    if (selectedDeletedFolderId) {
+        // Hide clear completed button when viewing deleted folder
         clearCompletedBtn.classList.add('hidden');
+        // Also hide undo button if it exists
+        const undoBtn = document.getElementById('undo-clear-btn');
+        if (undoBtn) {
+            undoBtn.classList.add('hidden');
+        }
+    } else {
+        const completedCount = tasks.filter(t => t.completed && (!selectedFolderId || t.folderId === selectedFolderId)).length;
+        if (completedCount > 0) {
+            clearCompletedBtn.classList.remove('hidden');
+        } else {
+            clearCompletedBtn.classList.add('hidden');
+        }
     }
 }
 
 function createTaskElement(task) {
     const li = document.createElement('li');
-    li.className = 'flex items-center gap-4 p-4 bg-black/30 border border-gray-500 hover:border-gray-400 transition-all duration-300 group task-item-enter';
+    const isDeletedFolderView = selectedDeletedFolderId !== null;
+    
+    li.className = `flex items-center gap-2 sm:gap-4 p-3 sm:p-4 ${isDeletedFolderView ? 'bg-red-900/20 border-red-500/50' : 'bg-black/30 border-gray-500'} hover:border-gray-400 transition-all duration-300 group task-item-enter`;
     li.dataset.taskId = task.id;
     
     li.innerHTML = `
         <input 
             type="checkbox" 
-            class="w-5 h-5 text-white bg-transparent border border-gray-500 focus:ring-0 focus:ring-offset-0"
+            class="w-4 h-4 sm:w-5 sm:h-5 text-white bg-transparent border border-gray-500 focus:ring-0 focus:ring-offset-0 shrink-0"
             ${task.completed ? 'checked' : ''}
+            ${isDeletedFolderView ? 'disabled' : ''}
         >
-        <div class="flex-1 flex flex-col">
-            <span class="text-white font-light transition-all duration-300 ${task.completed ? 'line-through text-gray-500' : ''}" style="font-family: 'Inter', 'Helvetica Neue', sans-serif;">
+        <div class="flex-1 flex flex-col min-w-0">
+            <span class="text-white font-light transition-all duration-300 ${task.completed ? 'line-through text-gray-500' : ''} ${isDeletedFolderView ? 'text-red-200' : ''} text-sm sm:text-base break-words" style="font-family: 'Inter', 'Helvetica Neue', sans-serif;">
                 ${escapeHtml(task.text)}
             </span>
-            ${task.dueAt ? `<span class="text-xs text-gray-400 mt-1">${formatLocalDateTime(task.dueAt)}</span>` : ''}
+            ${task.dueAt ? `<span class="text-xs ${isDeletedFolderView ? 'text-red-300' : 'text-gray-400'} mt-1">${formatLocalDateTime(task.dueAt)}</span>` : ''}
         </div>
-        <button class="opacity-0 group-hover:opacity-100 transition-opacity duration-300 text-red-400 hover:text-red-300 p-2" title="Sil">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        ${!isDeletedFolderView ? `<button class="opacity-0 group-hover:opacity-100 sm:opacity-100 transition-opacity duration-300 text-red-400 hover:text-red-300 p-1 sm:p-2 shrink-0" title="Sil">
+            <svg class="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
             </svg>
-        </button>
+        </button>` : ''}
     `;
     
-    // Add event listeners
-    const checkbox = li.querySelector('input[type="checkbox"]');
-    const deleteBtn = li.querySelector('button');
-    
-    checkbox.addEventListener('change', () => toggleTask(task.id));
-    deleteBtn.addEventListener('click', () => deleteTaskWithAnimation(task.id, li));
+    // Add event listeners only for active folders
+    if (!isDeletedFolderView) {
+        const checkbox = li.querySelector('input[type="checkbox"]');
+        const deleteBtn = li.querySelector('button');
+        
+        checkbox.addEventListener('change', () => toggleTask(task.id));
+        deleteBtn.addEventListener('click', () => deleteTaskWithAnimation(task.id, li));
+    }
     
     return li;
 }
@@ -534,11 +724,18 @@ function deleteTaskWithAnimation(id, element) {
 }
 
 function updateStats() {
-    const total = tasks.length;
-    const completed = tasks.filter(t => t.completed).length;
+    let inFolder;
+    if (selectedDeletedFolderId) {
+        inFolder = tasks.filter(t => t.folderId === selectedDeletedFolderId);
+    } else {
+        inFolder = tasks.filter(t => !selectedFolderId || t.folderId === selectedFolderId);
+    }
+    const total = inFolder.length;
+    const completed = inFolder.filter(t => t.completed).length;
     const remaining = total - completed;
     
-    taskStats.textContent = `Toplam: ${total} | Tamamlanan: ${completed} | Kalan: ${remaining}`;
+    const prefix = selectedDeletedFolderId ? 'Silinecek - ' : '';
+    taskStats.textContent = `${prefix}Toplam: ${total} | Tamamlanan: ${completed} | Kalan: ${remaining}`;
 }
 
 // Utility functions
@@ -559,22 +756,308 @@ function formatLocalDateTime(isoString) {
     }
 }
 
-// LocalStorage functions
-function saveTasks() {
-    localStorage.setItem('todoTasks', JSON.stringify(tasks));
+// LocalStorage functions (state)
+function saveState() {
+    localStorage.setItem('todoState', JSON.stringify({ tasks, folders, selectedFolderId }));
 }
 
-function loadTasks() {
-    const saved = localStorage.getItem('todoTasks');
+function loadState() {
+    const saved = localStorage.getItem('todoState');
     if (saved) {
         try {
-            tasks = JSON.parse(saved);
+            const parsed = JSON.parse(saved);
+            tasks = Array.isArray(parsed.tasks) ? parsed.tasks : [];
+            folders = Array.isArray(parsed.folders) ? parsed.folders : [];
+            selectedFolderId = parsed.selectedFolderId || null;
         } catch (e) {
-            console.error('Error loading tasks:', e);
+            console.error('Error loading state:', e);
             tasks = [];
+            folders = [];
+            selectedFolderId = null;
         }
+    } else {
+        // Migrate from old storage if exists
+        const legacy = localStorage.getItem('todoTasks');
+        if (legacy) {
+            try {
+                tasks = JSON.parse(legacy) || [];
+            } catch (_) { tasks = []; }
+        }
+        folders = [];
+        selectedFolderId = null;
+        saveState();
     }
 }
+
+function ensureDefaultFolder() {
+    if (!folders || folders.length === 0) {
+        const defaultFolder = { id: 'default', name: 'Genel' };
+        folders = [defaultFolder];
+        // Assign any tasks without folderId to default
+        tasks.forEach(t => { if (!t.folderId) t.folderId = defaultFolder.id; });
+        selectedFolderId = defaultFolder.id;
+        saveState();
+    } else if (!selectedFolderId) {
+        selectedFolderId = folders[0].id;
+        saveState();
+    }
+}
+
+// Folder UI & actions
+function renderFolders() {
+    // Back-compat: clear legacy list if exists
+    if (folderListEl) folderListEl.innerHTML = '';
+    if (!folderSelectEl) return;
+    folderSelectEl.innerHTML = '';
+    folders.filter(f => !f.deletedAt).forEach(folder => {
+        const opt = document.createElement('option');
+        opt.value = folder.id;
+        opt.textContent = `${folder.name}`;
+        if (folder.id === selectedFolderId) opt.selected = true;
+        folderSelectEl.appendChild(opt);
+    });
+}
+
+function onFolderSelectChange() {
+    selectedFolderId = folderSelectEl.value;
+    selectedDeletedFolderId = null; // Clear deleted folder selection when selecting active folder
+    selectedCalendarDate = null;
+    saveState();
+    renderFolders();
+    renderDeletedFolders();
+    renderTasks();
+    renderCalendar();
+    updateDeleteFolderButton();
+}
+
+function onAddFolder() {
+    const name = prompt('Klasör adı:');
+    if (!name) return;
+    const folder = { id: `f_${Date.now()}`, name: name.trim(), deletedAt: null };
+    folders.push(folder);
+    selectedFolderId = folder.id;
+    saveState();
+    renderFolders();
+    renderDeletedFolders();
+    renderTasks();
+    updateDeleteFolderButton();
+}
+
+function updateCurrentFolderLabel() {
+    if (!currentFolderLabel) return;
+    
+    // If viewing deleted folder
+    if (selectedDeletedFolderId) {
+        const deletedFolder = folders.find(f => f.id === selectedDeletedFolderId && f.deletedAt);
+        const taskCount = tasks.filter(t => t.folderId === selectedDeletedFolderId).length;
+        currentFolderLabel.textContent = deletedFolder ? 
+            `Silinecek Klasör: ${deletedFolder.name} (${taskCount} görev)` : 
+            'Silinecek klasör bulunamadı';
+        currentFolderLabel.className = 'text-red-400 text-sm font-light';
+        return;
+    }
+    
+    // Normal folder display
+    const current = folders.find(f => f.id === selectedFolderId);
+    currentFolderLabel.textContent = current ? `Klasör: ${current.name}` : 'Görevlerinizi organize edin';
+    currentFolderLabel.className = 'text-gray-400 text-sm font-light';
+}
+
+function updateDeleteFolderButton() {
+    if (!deleteFolderBtn) return;
+    const isDefault = selectedFolderId === 'default';
+    deleteFolderBtn.disabled = isDefault;
+    deleteFolderBtn.classList.toggle('opacity-50', isDefault);
+    deleteFolderBtn.classList.toggle('cursor-not-allowed', isDefault);
+    
+    // Update clear completed button visibility
+    
+}
+
+function renderDeletedFolders() {
+    if (!deletedFolderSelectEl) return;
+    deletedFolderSelectEl.innerHTML = '';
+    const deleted = folders.filter(f => f.deletedAt);
+    
+    // Add default option
+    const defaultOpt = document.createElement('option');
+    defaultOpt.value = '';
+    defaultOpt.textContent = deleted.length === 0 ? '—' : 'Klasör seçin...';
+    defaultOpt.selected = !selectedDeletedFolderId;
+    deletedFolderSelectEl.appendChild(defaultOpt);
+    
+    // Add deleted folders
+    deleted.forEach(folder => {
+        const taskCount = tasks.filter(t => t.folderId === folder.id).length;
+        const opt = document.createElement('option');
+        opt.value = folder.id;
+        opt.textContent = `${folder.name} (${taskCount} görev)`;
+        opt.selected = selectedDeletedFolderId === folder.id;
+        deletedFolderSelectEl.appendChild(opt);
+    });
+}
+function onDeletedFolderSelectChange() {
+    const selectedValue = deletedFolderSelectEl.value;
+    if (selectedValue) {
+        selectedDeletedFolderId = selectedValue;
+        selectedFolderId = null; // Clear active folder selection
+        selectedCalendarDate = null;
+    } else {
+        selectedDeletedFolderId = null;
+    }
+    renderTasks();
+    updateCurrentFolderLabel();
+}
+
+function onRestoreFolder() {
+    if (!deletedFolderSelectEl || !deletedFolderSelectEl.value) return;
+    const id = deletedFolderSelectEl.value;
+    const folder = folders.find(f => f.id === id && f.deletedAt);
+    if (!folder) return;
+    const tasksInFolder = tasks.filter(t => t.folderId === id).length;
+    const ok = confirm(`"${folder.name}" klasörünü geri getirmek istiyor musunuz?\nBu klasörde ${tasksInFolder} görev var.`);
+    if (!ok) return;
+    
+    // Restore folder: remove deletedAt timestamp
+    folder.deletedAt = null;
+    
+    // Switch to the restored folder
+    selectedFolderId = folder.id;
+    selectedDeletedFolderId = null; // Clear deleted folder selection
+    
+    saveState();
+    renderFolders();
+    renderDeletedFolders();
+    renderTasks();
+    renderCalendar();
+    updateDeleteFolderButton();
+}
+
+function onPurgeFolder() {
+    if (!deletedFolderSelectEl || !deletedFolderSelectEl.value) return;
+    const id = deletedFolderSelectEl.value;
+    const folder = folders.find(f => f.id === id && f.deletedAt);
+    if (!folder) return;
+    const tasksInFolder = tasks.filter(t => t.folderId === id).length;
+    const ok = confirm(`Kalıcı olarak silinsin mi?\nKlasör: ${folder.name}\nGörev sayısı: ${tasksInFolder}`);
+    if (!ok) return;
+    tasks = tasks.filter(t => t.folderId !== id);
+    folders = folders.filter(f => f.id !== id);
+    selectedDeletedFolderId = null; // Clear selection after deletion
+    saveState();
+    renderFolders();
+    renderDeletedFolders();
+    renderTasks();
+    renderCalendar();
+    updateDeleteFolderButton();
+}
+
+function onDeleteFolder() {
+    if (!selectedFolderId || selectedFolderId === 'default') return;
+    const current = folders.find(f => f.id === selectedFolderId);
+    if (!current) return;
+    const tasksInFolder = tasks.filter(t => t.folderId === selectedFolderId).length;
+    const ok = confirm(`"${current.name}" klasörünü silmek istiyor musunuz?\nBu klasörde ${tasksInFolder} görev var. Klasör ve görevler 'Silinen Klasörler' menüsüne taşınacaktır.`);
+    if (!ok) return;
+    // Soft delete: mark folder as deleted
+    current.deletedAt = new Date().toISOString();
+    // Choose next active folder
+    const firstActive = folders.find(f => !f.deletedAt && f.id !== 'default');
+    selectedFolderId = firstActive ? firstActive.id : 'default';
+    saveState();
+    renderFolders();
+    renderDeletedFolders();
+    renderTasks();
+    renderCalendar();
+    updateDeleteFolderButton();
+}
+
+// ===== Calendar =====
+function changeMonth(delta) {
+    calendarViewDate.setMonth(calendarViewDate.getMonth() + delta);
+    renderCalendar();
+}
+
+function renderCalendar() {
+    if (!calendarGridEl || !calendarHeaderEl) return;
+    // Header
+    const monthFormatter = new Intl.DateTimeFormat('tr-TR', { month: 'long', year: 'numeric' });
+    calendarHeaderEl.textContent = monthFormatter.format(calendarViewDate);
+
+    // Grid
+    calendarGridEl.innerHTML = '';
+    // Weekday headers
+    const weekdayShort = ['Pzt','Sal','Çar','Per','Cum','Cmt','Paz'];
+    weekdayShort.forEach(d => {
+        const h = document.createElement('div');
+        h.className = 'text-[11px] text-gray-500 text-center py-1';
+        h.textContent = d;
+        calendarGridEl.appendChild(h);
+    });
+
+    const first = new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth(), 1);
+    const last = new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth() + 1, 0);
+    // Convert Sunday(0) to 7 to make Monday-first grid
+    const startOffset = (first.getDay() === 0 ? 7 : first.getDay()) - 1;
+    const totalDays = last.getDate();
+    const cellsBefore = startOffset;
+    const cellsTotal = cellsBefore + totalDays;
+    const trailing = (7 - (cellsTotal % 7)) % 7;
+
+    // Helper to get tasks on a day within selected folder
+    const tasksByDay = {};
+    const inFolder = tasks.filter(t => !selectedFolderId || t.folderId === selectedFolderId);
+    inFolder.forEach(t => {
+        if (!t.dueAt) return;
+        const d = new Date(t.dueAt);
+        if (d.getMonth() !== calendarViewDate.getMonth() || d.getFullYear() !== calendarViewDate.getFullYear()) return;
+        const key = d.getDate();
+        tasksByDay[key] = (tasksByDay[key] || 0) + 1;
+    });
+
+    const today = new Date();
+    today.setHours(0,0,0,0);
+
+    // Leading empty cells
+    for (let i = 0; i < cellsBefore; i++) {
+        const c = document.createElement('div');
+        c.className = 'h-8 text-xs text-gray-600 opacity-30 border border-gray-800';
+        calendarGridEl.appendChild(c);
+    }
+    // Day cells
+    for (let day = 1; day <= totalDays; day++) {
+        const cellDate = new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth(), day);
+        const isToday = cellDate.getTime() === today.getTime();
+        const count = tasksByDay[day] || 0;
+        const btn = document.createElement('button');
+        btn.className = `relative h-8 text-xs border ${isToday ? 'border-white' : 'border-gray-700'} hover:border-white transition-all duration-200`;
+        btn.innerHTML = `<span class="absolute left-1 top-1/2 -translate-y-1/2">${day}</span>` +
+                        (count > 0 ? `<span class="absolute right-1 top-1/2 -translate-y-1/2 text-[10px] px-1 border ${count>0?'border-white':'border-gray-700'}">${count}</span>` : '');
+        btn.addEventListener('click', () => onCalendarDayClick(cellDate));
+        calendarGridEl.appendChild(btn);
+    }
+    // Trailing empty cells
+    for (let i = 0; i < trailing; i++) {
+        const c = document.createElement('div');
+        c.className = 'h-8 text-xs text-gray-600 opacity-30 border border-gray-800';
+        calendarGridEl.appendChild(c);
+    }
+}
+
+function onCalendarDayClick(dateObj) {
+    // Set filter to show all, but constrain via date when rendering
+    setFilter('all');
+    // Store selected date for render filter
+    selectedCalendarDate = new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate());
+    renderTasks();
+    // Visual feedback: bold header for selected day in month label
+    if (calendarHeaderEl) {
+        const fmt = new Intl.DateTimeFormat('tr-TR', { day: '2-digit', month: 'long', year: 'numeric' });
+        calendarHeaderEl.textContent = `${new Intl.DateTimeFormat('tr-TR', { month: 'long', year: 'numeric' }).format(calendarViewDate)} • ${fmt.format(selectedCalendarDate)}`;
+    }
+}
+
+let selectedCalendarDate = null;
 
 // Main App Three.js Background
 let mainScene, mainCamera, mainRenderer, mainCubes = [];
@@ -637,4 +1120,5 @@ function animateMain() {
     
     mainRenderer.render(mainScene, mainCamera);
 }
+
 
