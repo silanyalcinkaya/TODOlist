@@ -319,7 +319,7 @@ let undoTimeout = null; // Timer for undo functionality
 // DOM elements for main app
 let taskInput, addTaskBtn, taskList, emptyState, taskStats;
 let showAllBtn, showActiveBtn, showCompletedBtn, clearCompletedBtn;
-let dueDatetimeInput, duePickerBtn;
+let dueDateInput, dueTimeInput, dueDatePickerBtn, dueTimePickerBtn;
 let folderListEl, addFolderBtn, currentFolderLabel, folderSelectEl, deleteFolderBtn;
 let deletedFolderSelectEl, purgeFolderBtn, restoreFolderBtn;
 let calendarGridEl, calendarHeaderEl, calPrevBtn, calNextBtn;
@@ -337,8 +337,10 @@ function initMainApp() {
     showActiveBtn = document.getElementById('show-active');
     showCompletedBtn = document.getElementById('show-completed');
     clearCompletedBtn = document.getElementById('clear-completed');
-    dueDatetimeInput = document.getElementById('due-datetime');
-    duePickerBtn = document.getElementById('due-picker-btn');
+    dueDateInput = document.getElementById('due-date');
+    dueTimeInput = document.getElementById('due-time');
+    dueDatePickerBtn = document.getElementById('due-date-picker-btn');
+    dueTimePickerBtn = document.getElementById('due-time-picker-btn');
     folderListEl = document.getElementById('folder-list');
     folderSelectEl = document.getElementById('folder-select');
     addFolderBtn = document.getElementById('add-folder-btn');
@@ -374,46 +376,62 @@ function initMainApp() {
     if (calPrevBtn) calPrevBtn.addEventListener('click', () => changeMonth(-1));
     if (calNextBtn) calNextBtn.addEventListener('click', () => changeMonth(1));
 
-    // Initialize and enforce min for datetime input
-    if (dueDatetimeInput) {
-        const updateMin = () => {
+    // Initialize and enforce min for date input
+    if (dueDateInput) {
+        const updateDateMin = () => {
             const now = new Date();
             const pad = (n) => String(n).padStart(2, '0');
-            const localISO = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
-            dueDatetimeInput.min = localISO;
+            const localDate = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+            dueDateInput.min = localDate;
             // If current value is before min, clear it
-            if (dueDatetimeInput.value && dueDatetimeInput.value < localISO) {
-                dueDatetimeInput.value = localISO;
+            if (dueDateInput.value && dueDateInput.value < localDate) {
+                dueDateInput.value = localDate;
             }
         };
-        updateMin();
+        updateDateMin();
         // Refresh min every minute to keep up with time
-        setInterval(updateMin, 60000);
+        setInterval(updateDateMin, 60000);
 
         // Prevent manual selection of the past
-        dueDatetimeInput.addEventListener('change', () => {
-            if (!dueDatetimeInput.value) return;
-            const minVal = dueDatetimeInput.min;
-            if (dueDatetimeInput.value < minVal) {
-                dueDatetimeInput.value = minVal;
+        dueDateInput.addEventListener('change', () => {
+            if (!dueDateInput.value) return;
+            const minVal = dueDateInput.min;
+            if (dueDateInput.value < minVal) {
+                dueDateInput.value = minVal;
             }
         });
     }
 
-    // Visible button to open native picker where supported
-    if (duePickerBtn && dueDatetimeInput) {
-        const openPicker = () => {
+    // Visible button to open native date picker where supported
+    if (dueDatePickerBtn && dueDateInput) {
+        const openDatePicker = () => {
             try {
-                if (typeof dueDatetimeInput.showPicker === 'function') {
-                    dueDatetimeInput.showPicker();
+                if (typeof dueDateInput.showPicker === 'function') {
+                    dueDateInput.showPicker();
                     return;
                 }
             } catch (_) {}
             // Fallback: focus to trigger built-in UI
-            dueDatetimeInput.focus();
-            dueDatetimeInput.click();
+            dueDateInput.focus();
+            dueDateInput.click();
         };
-        duePickerBtn.addEventListener('click', openPicker);
+        dueDatePickerBtn.addEventListener('click', openDatePicker);
+    }
+
+    // Visible button to open native time picker where supported
+    if (dueTimePickerBtn && dueTimeInput) {
+        const openTimePicker = () => {
+            try {
+                if (typeof dueTimeInput.showPicker === 'function') {
+                    dueTimeInput.showPicker();
+                    return;
+                }
+            } catch (_) {}
+            // Fallback: focus to trigger built-in UI
+            dueTimeInput.focus();
+            dueTimeInput.click();
+        };
+        dueTimePickerBtn.addEventListener('click', openTimePicker);
     }
     
     // Filter buttons
@@ -456,19 +474,39 @@ function addTask() {
     if (text === '') return;
     if (!selectedFolderId) ensureDefaultFolder();
     
+    // Kullanıcının seçimine göre dueAt belirle
+    let dueAt = null;
+    const hasDate = dueDateInput && dueDateInput.value;
+    const hasTime = dueTimeInput && dueTimeInput.value;
+    
+    if (hasDate && hasTime) {
+        // Hem tarih hem saat seçilmiş
+        dueAt = new Date(`${dueDateInput.value}T${dueTimeInput.value}`).toISOString();
+    } else if (hasDate && !hasTime) {
+        // Sadece tarih seçilmiş - saat verilmez
+        dueAt = dueDateInput.value; // Sadece tarih string olarak sakla
+    } else if (!hasDate && hasTime) {
+        // Sadece saat seçilmiş - tarih verilmez
+        dueAt = dueTimeInput.value; // Sadece saat string olarak sakla
+    }
+    // Hiçbiri seçilmemişse dueAt null kalır
+    
     const task = {
         id: Date.now(),
         text: text,
         completed: false,
         createdAt: new Date().toISOString(),
-        dueAt: dueDatetimeInput && dueDatetimeInput.value ? new Date(dueDatetimeInput.value).toISOString() : null,
+        dueAt: dueAt,
         folderId: selectedFolderId
     };
     
     tasks.push(task);
     taskInput.value = '';
-    if (dueDatetimeInput) {
-        dueDatetimeInput.value = '';
+    if (dueDateInput) {
+        dueDateInput.value = '';
+    }
+    if (dueTimeInput) {
+        dueTimeInput.value = '';
     }
     saveState();
     renderTasks();
@@ -590,11 +628,21 @@ function getFilteredTasks() {
         // Apply calendar day filter if any
         let inDate = deletedFolderTasks;
         if (selectedCalendarDate) {
-            const start = new Date(selectedCalendarDate);
-            start.setHours(0,0,0,0);
-            const end = new Date(selectedCalendarDate);
-            end.setHours(23,59,59,999);
-            inDate = deletedFolderTasks.filter(t => t.dueAt && (new Date(t.dueAt)).getTime() >= start.getTime() && (new Date(t.dueAt)).getTime() <= end.getTime());
+            const targetDate = selectedCalendarDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+            inDate = deletedFolderTasks.filter(t => {
+                if (!t.dueAt) return false;
+                // Eğer ISO datetime ise
+                if (t.dueAt.includes('T')) {
+                    const taskDate = new Date(t.dueAt).toISOString().split('T')[0];
+                    return taskDate === targetDate;
+                }
+                // Eğer sadece tarih string ise
+                else if (t.dueAt.match(/^\d{4}-\d{2}-\d{2}$/)) {
+                    return t.dueAt === targetDate;
+                }
+                // Eğer sadece saat string ise, takvimde gösterme
+                return false;
+            });
         }
         switch (currentFilter) {
             case 'active':
@@ -611,11 +659,21 @@ function getFilteredTasks() {
     // Apply calendar day filter if any
     let inDate = inFolder;
     if (selectedCalendarDate) {
-        const start = new Date(selectedCalendarDate);
-        start.setHours(0,0,0,0);
-        const end = new Date(selectedCalendarDate);
-        end.setHours(23,59,59,999);
-        inDate = inFolder.filter(t => t.dueAt && (new Date(t.dueAt)).getTime() >= start.getTime() && (new Date(t.dueAt)).getTime() <= end.getTime());
+        const targetDate = selectedCalendarDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+        inDate = inFolder.filter(t => {
+            if (!t.dueAt) return false;
+            // Eğer ISO datetime ise
+            if (t.dueAt.includes('T')) {
+                const taskDate = new Date(t.dueAt).toISOString().split('T')[0];
+                return taskDate === targetDate;
+            }
+            // Eğer sadece tarih string ise
+            else if (t.dueAt.match(/^\d{4}-\d{2}-\d{2}$/)) {
+                return t.dueAt === targetDate;
+            }
+            // Eğer sadece saat string ise, takvimde gösterme
+            return false;
+        });
     }
     switch (currentFilter) {
         case 'active':
@@ -745,12 +803,26 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// Format ISO datetime to local readable string
-function formatLocalDateTime(isoString) {
+// Format dueAt to local readable string
+function formatLocalDateTime(dueAtValue) {
     try {
-        const d = new Date(isoString);
-        if (Number.isNaN(d.getTime())) return '';
-        return d.toLocaleString([], { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+        // Eğer ISO datetime string ise (hem tarih hem saat)
+        if (dueAtValue.includes('T')) {
+            const d = new Date(dueAtValue);
+            if (Number.isNaN(d.getTime())) return '';
+            return d.toLocaleString([], { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+        }
+        // Eğer sadece tarih string ise (YYYY-MM-DD formatında)
+        else if (dueAtValue.match(/^\d{4}-\d{2}-\d{2}$/)) {
+            const d = new Date(dueAtValue);
+            if (Number.isNaN(d.getTime())) return '';
+            return d.toLocaleDateString([], { year: 'numeric', month: '2-digit', day: '2-digit' });
+        }
+        // Eğer sadece saat string ise (HH:MM formatında)
+        else if (dueAtValue.match(/^\d{2}:\d{2}$/)) {
+            return dueAtValue;
+        }
+        return '';
     } catch (_) {
         return '';
     }
@@ -1009,10 +1081,26 @@ function renderCalendar() {
     const inFolder = tasks.filter(t => !selectedFolderId || t.folderId === selectedFolderId);
     inFolder.forEach(t => {
         if (!t.dueAt) return;
-        const d = new Date(t.dueAt);
-        if (d.getMonth() !== calendarViewDate.getMonth() || d.getFullYear() !== calendarViewDate.getFullYear()) return;
-        const key = d.getDate();
-        tasksByDay[key] = (tasksByDay[key] || 0) + 1;
+        
+        let taskDate;
+        // Eğer ISO datetime ise
+        if (t.dueAt.includes('T')) {
+            const d = new Date(t.dueAt);
+            if (d.getMonth() !== calendarViewDate.getMonth() || d.getFullYear() !== calendarViewDate.getFullYear()) return;
+            taskDate = d.getDate();
+        }
+        // Eğer sadece tarih string ise
+        else if (t.dueAt.match(/^\d{4}-\d{2}-\d{2}$/)) {
+            const d = new Date(t.dueAt);
+            if (d.getMonth() !== calendarViewDate.getMonth() || d.getFullYear() !== calendarViewDate.getFullYear()) return;
+            taskDate = d.getDate();
+        }
+        // Eğer sadece saat string ise, takvimde gösterme
+        else {
+            return;
+        }
+        
+        tasksByDay[taskDate] = (tasksByDay[taskDate] || 0) + 1;
     });
 
     const today = new Date();

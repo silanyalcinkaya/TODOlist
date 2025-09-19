@@ -143,18 +143,33 @@
                         class="flex-1 px-3 sm:px-6 py-3 sm:py-4 bg-black/50 border border-gray-500 text-white placeholder-gray-400 focus:outline-none focus:border-white transition-all duration-300 rounded-none text-sm sm:text-base"
                         style="font-family: 'Inter', 'Helvetica Neue', sans-serif; font-weight: 300;"
                     >
-                    <div class="relative">
-                        <input
-                            type="datetime-local"
-                            id="due-datetime"
-                            class="w-full sm:w-auto px-3 sm:px-4 py-3 sm:py-4 pr-10 sm:pr-12 bg-black/50 border border-gray-500 text-white placeholder-gray-400 focus:outline-none focus:border-white transition-all duration-300 rounded-none text-sm sm:text-base"
-                            aria-label="Bitiş tarihi ve saati"
-                        >
-                        <button id="due-picker-btn" type="button" class="absolute right-2 sm:right-3 top-1/2 -translate-y-1/2 text-gray-300 hover:text-white" title="Tarih/Saat seç">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 sm:h-5 sm:w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                            </svg>
-                        </button>
+                    <div class="flex gap-2">
+                        <div class="relative">
+                            <input
+                                type="date"
+                                id="due-date"
+                                class="px-3 sm:px-4 py-3 sm:py-4 pr-10 sm:pr-12 bg-black/50 border border-gray-500 text-white placeholder-gray-400 focus:outline-none focus:border-white transition-all duration-300 rounded-none text-sm sm:text-base"
+                                aria-label="Bitiş tarihi"
+                            >
+                            <button id="due-date-picker-btn" type="button" class="absolute right-2 sm:right-3 top-1/2 -translate-y-1/2 text-gray-300 hover:text-white" title="Tarih seç">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 sm:h-5 sm:w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="relative">
+                            <input
+                                type="time"
+                                id="due-time"
+                                class="px-3 sm:px-4 py-3 sm:py-4 pr-10 sm:pr-12 bg-black/50 border border-gray-500 text-white placeholder-gray-400 focus:outline-none focus:border-white transition-all duration-300 rounded-none text-sm sm:text-base"
+                                aria-label="Bitiş saati"
+                            >
+                            <button id="due-time-picker-btn" type="button" class="absolute right-2 sm:right-3 top-1/2 -translate-y-1/2 text-gray-300 hover:text-white" title="Saat seç">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 sm:h-5 sm:w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                            </button>
+                        </div>
                     </div>
                     <button 
                         id="add-task-btn" 
